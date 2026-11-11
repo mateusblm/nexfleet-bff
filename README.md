@@ -1,89 +1,251 @@
-# NexFleet — BFF (Backend for Frontend)
+# NexFleet BFF
 
-Camada de composição entre o frontend e os microsserviços do NexFleet, plataforma de gestão de frotas. Parte da v1.0.0; o sistema completo está no repositório guarda-chuva [nexfleet](https://github.com/mateusblm/nexfleet).
+Backend for Frontend do NexFleet: valida o usuário, orquestra os microsserviços e devolve à aplicação web respostas prontas para a tela, inclusive a visão consolidada da frota.
+
+[![CI](https://github.com/mateusblm/nexfleet-bff/actions/workflows/ci.yml/badge.svg)](https://github.com/mateusblm/nexfleet-bff/actions/workflows/ci.yml)
+[![Docker Hub](https://img.shields.io/docker/v/mateusblm/nexfleet-bff?sort=semver)](https://hub.docker.com/r/mateusblm/nexfleet-bff)
+![Java 21](https://img.shields.io/badge/Java-21-007396)
+![Spring Boot 4.1.1](https://img.shields.io/badge/Spring%20Boot-4.1.1-6DB33F)
+
+---
+
+## Visão geral
+
+O NexFleet é uma plataforma de gestão de frotas empresariais: veículos, motoristas, vínculos, abastecimentos, manutenções, painel de custos e uma visão consolidada de eficiência.
+
+O **BFF** recebe as chamadas que chegam pelo API Management e pelo API Gateway, valida o JWT emitido pela Identidade (chave pública via JWKS) e repassa ou compõe as respostas de Identidade, Frota, Operações, Indicadores e da Function `calcular-eficiencia`. Não tem banco de dados próprio.
+
+```mermaid
+flowchart LR
+  MFE[Microfrontends] --> APIM[API Management] --> GW[API Gateway] --> BFF
+  BFF --> ID[Identidade]
+  BFF --> FROTA[Frota] --> MONGO[(MongoDB Atlas)]
+  BFF --> OPS[Operações] --> SQL[(Azure SQL)]
+  BFF --> FN[Function calcular-eficiencia]
+  BFF --> IND[Indicadores]
+  OPS -- outbox --> SB{{"Service Bus / RabbitMQ"}}
+  SB --> IND
+  SB --> NOT[Function de notificação]
+  classDef destaque fill:#0b5cad,color:#fff,stroke:#063a6e,stroke-width:2px
+  class BFF destaque
+```
+
+## Funcionalidades
+
+- Login e consulta do usuário atual, delegados à Identidade.
+- Validação do JWT pela JWKS da Identidade (`/.well-known/jwks.json`, perfil `jwt-rsa`).
+- Cadastros de usuários, veículos, motoristas e vínculos; registros de abastecimentos e manutenções, encaminhados ao serviço dono de cada dado.
+- Exclusão definitiva de veículo bloqueada quando há manutenções registradas em Operações (Frota aplica as demais regras: registro inativo e sem histórico).
+- Painel composto por Indicadores (gastos e próximas manutenções) e Frota (situação dos veículos).
+- **Visão consolidada** (`GET /aggregated-data`): Frota, Operações e eficiência em um único JSON, com retorno parcial quando uma fonte falha.
+- Situação do ambiente e dos serviços (`GET /api/v1/ambiente`, pública).
+- Propagação do `X-Correlation-ID` para todos os serviços chamados.
 
 ## Arquitetura
 
-O BFF recebe as chamadas do Gateway (e, na nuvem, do APIM), valida o JWT emitido pela Identidade e repassa ou compõe as respostas dos serviços internos. Não tem banco próprio.
-
-```text
-Navegador → shell + microfrontends (Static Web Apps)
-          → Azure API Management (APIM) → Gateway → BFF
-              ├─ MS1 Frota ........ MongoDB Atlas
-              ├─ MS2 Operações .... Azure SQL (schema operacoes)
-              ├─ Identidade, Indicadores ... Azure SQL (um schema e um login por serviço)
-              └─ Azure Function HTTP calcular-eficiencia
-Operações → outbox → Service Bus (nuvem) / RabbitMQ (local) → Indicadores + Function (notificação)
-```
-
-**`GET /aggregated-data`** (também `GET /api/v1/aggregated-data`, exige `Authorization: Bearer <token>`):
-
-- chama Frota e Operações em paralelo, cada uma com tempo limite próprio (`AGREGADO_TIMEOUT`, padrão 5 s); com o histórico de Operações chama a Function `POST /api/calcular-eficiencia`, enviando a chave em `x-functions-key`;
-- responde `200` com `frota`, `operacoes` (últimos 10 abastecimentos e manutenções), `eficiencia` (por veículo e da frota), `fontes` e `geradoEm`;
-- **retorno parcial:** `fontes` traz `frota`, `operacoes` e `funcao` com `"ok"` ou `"falhou"`; a seção da fonte que falhou vem vazia e o restante continua preenchido. Se Operações falhar, a Function não é chamada (`funcao = "falhou"`);
-- se as três fontes falharem, responde `502`; sem token, `401`;
-- **limites:** lê até **4.000 abastecimentos** e **4.000 manutenções** de Operações; acima disso corta e marca `operacoes.truncado = true`.
-
-**Clean Architecture + Vertical Slice.** Cada caso de uso é uma fatia em `br.com.nexfleet.bff`, com as camadas `api` (controllers), `application` (caso de uso e portas) e `infrastructure` (clientes HTTP):
+**Clean Architecture + Vertical Slice.** Cada caso de uso é uma fatia em `br.com.nexfleet.bff`, com as camadas `api` (controllers REST), `application` (caso de uso e portas) e `infrastructure` (clientes HTTP dos serviços). O BFF não tem regras de domínio próprias, portanto não há camada `domain`.
 
 | Fatia | Responsabilidade |
 |---|---|
-| `autenticar` | login e sessão, repassados à Identidade |
-| `gerenciarusuarios` | administração de usuários |
-| `gerenciarveiculos`, `gerenciarmotoristas`, `gerenciarvinculos` | cadastros de Frota |
-| `gerenciarabastecimentos`, `gerenciarmanutencoes` | registros de Operações |
-| `consultardashboard` | painel vindo de Indicadores |
+| `autenticar` | Login e usuário atual, repassados à Identidade |
+| `gerenciarusuarios` | Administração de usuários |
+| `gerenciarveiculos` | Cadastro de veículos; checagem de manutenções antes da exclusão definitiva |
+| `gerenciarmotoristas` | Cadastro de motoristas |
+| `gerenciarvinculos` | Vínculos motorista ↔ veículo |
+| `gerenciarabastecimentos` | Registro e listagem de abastecimentos |
+| `gerenciarmanutencoes` | Registro e listagem de manutenções |
+| `consultardashboard` | Painel composto por Indicadores e Frota |
 | `consultaragregado` | `GET /aggregated-data` |
-| `consultarambiente` | situação do ambiente e dos serviços |
+| `consultarambiente` | Situação do ambiente e dos serviços |
 
-Pacotes técnicos: `config` (composição e segurança) e `observability` (propagação do `X-Correlation-ID`).
+Pacotes técnicos: `config` (composição, clientes HTTP, segurança e JWKS) e `observability` (correlação).
 
-**Testes:** unitários e de API com MockMvc e portas mockadas (ex.: `ConsultarAgregadoHttpTest`, `HttpEficienciaTest`, `OperacoesPorServicosTest`) e de arquitetura com ArchUnit (`ArchitectureTest`: `application` não depende de framework nem de adaptadores; `api` não acessa a persistência).
+Regras verificadas pelo ArchUnit (`ArchitectureTest`):
 
-## Tecnologias
+- `application` não depende de Spring, JPA, `infrastructure` nem `api`;
+- `api` não acessa `infrastructure` nem persistência diretamente;
+- nenhuma classe importa código interno de outros serviços.
 
-- Java 21, Spring Boot 4.1.1 (Web MVC, Security, OAuth2 Resource Server, Actuator)
-- springdoc-openapi 3.2.0 (OpenAPI em `/v3/api-docs`)
-- Micrometer + Prometheus
-- JUnit 5, MockMvc, ArchUnit 1.4.1
-- Maven Wrapper (Maven 3.9.16)
-- Docker (`eclipse-temurin:21`), GitHub Actions (testes em todo push; imagem no Docker Hub em tag `v*`)
+## API
 
-## Como rodar localmente
+| Método | Rota | Descrição |
+|---|---|---|
+| `POST` | `/api/v1/auth/login` | Login; devolve o JWT |
+| `GET` | `/api/v1/auth/me` | Usuário autenticado |
+| `GET` | `/api/v1/ambiente` | Situação do ambiente (pública) |
+| `GET`, `POST` | `/api/v1/usuarios` | Listar e criar usuários |
+| `GET`, `PUT`, `DELETE` | `/api/v1/usuarios/{id}` | Consultar, editar e inativar usuário |
+| `DELETE` | `/api/v1/usuarios/{id}/definitivo` | Excluir usuário |
+| `GET`, `POST` | `/api/v1/veiculos` | Listar e cadastrar veículos |
+| `GET`, `PUT`, `DELETE` | `/api/v1/veiculos/{id}` | Consultar, editar e inativar veículo |
+| `DELETE` | `/api/v1/veiculos/{id}/definitivo` | Excluir veículo inativo e sem histórico |
+| `GET`, `POST` | `/api/v1/motoristas` | Listar e cadastrar motoristas |
+| `GET`, `PUT` | `/api/v1/motoristas/{id}` | Consultar e editar motorista |
+| `DELETE` | `/api/v1/motoristas/{id}/definitivo` | Excluir motorista inativo e sem histórico |
+| `GET`, `POST` | `/api/v1/vinculos` | Listar e criar vínculos |
+| `PUT` | `/api/v1/vinculos/{id}/encerramento` | Encerrar vínculo |
+| `GET`, `POST` | `/api/v1/abastecimentos` | Listar e registrar abastecimentos |
+| `GET`, `POST` | `/api/v1/manutencoes` | Listar e registrar manutenções |
+| `GET` | `/api/v1/dashboard` | Painel de custos e situação da frota |
+| `GET` | `/aggregated-data`, `/api/v1/aggregated-data` | Visão consolidada |
 
-```bash
-./mvnw -B -ntp verify                              # testes unitários e de arquitetura
-docker build -t mateusblm/nexfleet-bff:local .     # imagem (porta 8080)
+O OpenAPI do BFF é publicado em `/v3/api-docs` e reunido na Swagger UI do Gateway: **[Swagger UI em produção](https://apim-nexfleet-homolog-ukzjodf42myfe.azure-api.net/swagger-ui.html)**. O contrato completo da visão consolidada está em [`contracts/aggregated-data.openapi.yaml`](https://github.com/mateusblm/nexfleet/blob/main/contracts/aggregated-data.openapi.yaml), no repositório `nexfleet`.
+
+### `GET /aggregated-data`
+
+Exige `Authorization: Bearer <token>`. O BFF:
+
+1. consulta **Frota** (veículos, motoristas e vínculos ativos) e **Operações** (abastecimentos e manutenções) em paralelo, cada uma com tempo limite próprio (`AGREGADO_TIMEOUT`, padrão 5 s);
+2. envia o histórico de Operações, agrupado por veículo, à **Function** `POST /api/calcular-eficiencia`, com a chave no cabeçalho `x-functions-key`;
+3. responde `200` com `Cache-Control: no-store`.
+
+Exemplo resumido:
+
+```json
+{
+  "frota": {
+    "veiculos": [
+      { "id": "…", "placa": "ABC1D23", "marca": "…", "modelo": "…", "ano": 2024,
+        "tipo": "…", "quilometragem": 10500, "status": "EM_USO" }
+    ],
+    "motoristas": [
+      { "id": "…", "nome": "…", "categoria": "B", "validadeCnh": "2028-05-10", "status": "…" }
+    ],
+    "vinculosAtivos": [
+      { "id": "…", "veiculoId": "…", "veiculoPlaca": "ABC1D23",
+        "motoristaId": "…", "motoristaNome": "…", "inicio": "2026-10-01T08:00:00Z" }
+    ]
+  },
+  "operacoes": {
+    "abastecimentos": [
+      { "id": "…", "veiculoId": "…", "realizadoEm": "2026-10-20T10:00:00Z",
+        "combustivel": "…", "litros": 50, "valorTotal": 250.50, "quilometragem": 10500 }
+    ],
+    "manutencoes": [
+      { "id": "…", "veiculoId": "…", "tipo": "…", "realizadaEm": "2026-10-15",
+        "quilometragem": 10300, "valor": 99.25, "proximaManutencao": null }
+    ],
+    "truncado": false
+  },
+  "eficiencia": {
+    "veiculos": [
+      { "veiculoId": "…", "placa": "ABC1D23", "consumoMedioKmL": 6.25, "custoPorKm": 1.50,
+        "gastoAbastecimento": 600.75, "gastoManutencao": 149.25, "gastoTotal": 750.00,
+        "distanciaKm": 500 }
+    ],
+    "frota": { "consumoMedioKmL": 6.25, "custoPorKm": 1.50, "gastoTotal": 750.00, "distanciaKm": 500 }
+  },
+  "fontes": { "frota": "ok", "operacoes": "ok", "funcao": "ok" },
+  "geradoEm": "2026-11-11T12:00:00Z"
+}
 ```
 
-Variáveis de ambiente: `PORT`, `IDENTIDADE_URL`, `FROTA_URL`, `OPERACOES_URL`, `INDICADORES_URL`, `EFICIENCIA_FUNCTION_URL`, `EFICIENCIA_FUNCTION_KEY`, `AGREGADO_TIMEOUT` e `SPRING_PROFILES_ACTIVE=jwt-rsa` (valida o token pela JWKS da Identidade).
+**Retorno parcial.** `fontes` informa `"ok"` ou `"falhou"` para `frota`, `operacoes` e `funcao`. A seção de uma fonte que falhou ou estourou o tempo limite vem vazia e o restante continua preenchido:
 
-**Ambiente completo** (todos os serviços, SQL Server, MongoDB e RabbitMQ locais) sobe pelo repositório guarda-chuva [nexfleet](https://github.com/mateusblm/nexfleet), com os repositórios clonados lado a lado (`scripts/clonar-tudo.sh`):
+- se **Operações** falhar, a Function não é chamada e `fontes.funcao` também vem `"falhou"`;
+- se as **três** fontes falharem, a resposta é `502`; sem token, `401`.
+
+**Limites.** `operacoes` traz até os 10 registros mais recentes de cada tipo. Para o cálculo, o BFF lê até 1.000 itens por listagem de Frota e até 4.000 abastecimentos e 4.000 manutenções de Operações; acima disso corta, registra aviso com o `correlationId` e marca `operacoes.truncado = true`.
+
+## Stack
+
+| Camada | Tecnologia | Versão |
+|---|---|---|
+| Linguagem | Java | 21 |
+| Framework | Spring Boot (Web MVC, Security, OAuth2 Resource Server, Actuator) | 4.1.1 |
+| Documentação | springdoc-openapi (`/v3/api-docs`) | 3.2.0 |
+| Observabilidade | Micrometer + Prometheus | gerenciada pelo Spring Boot |
+| Testes | JUnit 5, MockMvc, ArchUnit | 5 / — / 1.4.1 |
+| Build | Maven Wrapper | 3.9.16 |
+| Contêiner | `eclipse-temurin:21-jre-jammy` | 21 |
+| CI/CD | GitHub Actions → Docker Hub | — |
+
+## Primeiros passos
+
+### Pré-requisitos
+
+- JDK 21 (o Maven vem pelo wrapper `./mvnw`)
+- Docker, para gerar e executar a imagem
+
+### Testes
 
 ```bash
-scripts/iniciar-local.sh                                     # 1ª vez: gera o .env e a chave RSA local
+./mvnw -B -ntp verify
+```
+
+### Executar com Docker
+
+```bash
+docker run --rm -p 8090:8080 \
+  -e SPRING_PROFILES_ACTIVE=jwt-rsa \
+  -e IDENTIDADE_URL=http://<host-da-identidade>:8080 \
+  -e FROTA_URL=http://<host-da-frota>:8080 \
+  -e OPERACOES_URL=http://<host-de-operacoes>:8080 \
+  -e INDICADORES_URL=http://<host-de-indicadores>:8080 \
+  -e EFICIENCIA_FUNCTION_URL=http://<host-da-function> \
+  -e EFICIENCIA_FUNCTION_KEY=<chave-da-função> \
+  mateusblm/nexfleet-bff:v1.0.0
+```
+
+Para gerar a imagem a partir do código: `docker build -t mateusblm/nexfleet-bff:local .`
+
+### Ambiente completo
+
+O produto inteiro (todos os serviços, SQL Server, MongoDB e RabbitMQ) sobe pelo repositório [nexfleet](https://github.com/mateusblm/nexfleet):
+
+```bash
+git clone https://github.com/mateusblm/nexfleet.git && cd nexfleet
+scripts/clonar-tudo.sh                                        # clona os demais repositórios ao lado
+scripts/iniciar-local.sh                                      # gera o .env e a chave RSA local
 docker compose -f compose.yaml -f compose.build.yaml up -d --build
-scripts/seed-demo.sh                                         # dados de demonstração
+scripts/seed-demo.sh                                          # dados de demonstração
 ```
 
-Sem o override `compose.build.yaml`, o `docker compose up -d` usa as imagens publicadas no Docker Hub.
+A visão consolidada fica em `http://127.0.0.1:8080/aggregated-data` (pelo Gateway, com token).
 
-## URLs na nuvem
+## Configuração
 
-O BFF não tem URL pública direta: é acessado só pelo APIM (`/api/v1/...` e `/aggregated-data`).
+| Variável | Descrição | Padrão |
+|---|---|---|
+| `PORT` | Porta HTTP | `8080` |
+| `SPRING_PROFILES_ACTIVE` | `jwt-rsa` valida o token pela JWKS da Identidade | — |
+| `IDENTIDADE_URL` | URL da Identidade | `http://localhost:8081` |
+| `FROTA_URL` | URL de Frota | `http://localhost:8082` |
+| `OPERACOES_URL` | URL de Operações | `http://localhost:8083` |
+| `INDICADORES_URL` | URL de Indicadores | `http://localhost:8084` |
+| `EFICIENCIA_FUNCTION_URL` | URL base da Function de eficiência | `http://localhost:7071` |
+| `EFICIENCIA_FUNCTION_KEY` | Chave da função (`x-functions-key`); segredo | vazio |
+| `AGREGADO_TIMEOUT` | Tempo limite por fonte em `/aggregated-data` | `5s` |
 
-Imagem Docker: [`mateusblm/nexfleet-bff:v1.0.0`](https://hub.docker.com/r/mateusblm/nexfleet-bff)
+## Ambiente em nuvem
 
 | Recurso | Endereço |
 |---|---|
-| Frontend | https://white-mushroom-0cadda010.3.azurestaticapps.net |
-| API (APIM) | https://apim-nexfleet-homolog-ukzjodf42myfe.azure-api.net |
-| Swagger UI (BFF, Frota, Operações, Identidade, Indicadores) | https://apim-nexfleet-homolog-ukzjodf42myfe.azure-api.net/swagger-ui.html |
-| Dados agregados (exige token) | https://apim-nexfleet-homolog-ukzjodf42myfe.azure-api.net/aggregated-data |
+| Aplicação | https://white-mushroom-0cadda010.3.azurestaticapps.net |
+| API (Azure API Management) | https://apim-nexfleet-homolog-ukzjodf42myfe.azure-api.net |
+| Visão consolidada (com token) | https://apim-nexfleet-homolog-ukzjodf42myfe.azure-api.net/aggregated-data |
+| Swagger UI | https://apim-nexfleet-homolog-ukzjodf42myfe.azure-api.net/swagger-ui.html |
 | AsyncAPI dos eventos | https://white-mushroom-0cadda010.3.azurestaticapps.net/docs/eventos/ |
-| Repositório guarda-chuva | https://github.com/mateusblm/nexfleet |
+| Imagem Docker | https://hub.docker.com/r/mateusblm/nexfleet-bff |
 
-> **Partida a frio:** os Container Apps escalam a zero e o Azure SQL pausa sem uso. A primeira chamada após um período de inatividade pode levar de 1 a 2 minutos (ou responder 503/504); tente de novo em seguida.
+O BFF roda em Azure Container Apps e é alcançado só pelo API Management e pelo Gateway.
+
+> Os serviços escalam a zero quando ociosos. A primeira requisição após um período de inatividade pode levar de 1 a 2 minutos.
+
+## Testes
+
+| Tipo | Exemplos | O que cobre |
+|---|---|---|
+| Unitários e de API (MockMvc) | `ConsultarAgregadoHttpTest`, `ConsultarDashboardWebTest`, `AutenticarWebTest` | Controllers, casos de uso, retorno parcial e códigos de erro |
+| Clientes HTTP | `HttpEficienciaTest`, `OperacoesPorServicosTest`, `FrotaPorServicosTest`, `HttpVeiculosTest` | Chamadas aos serviços e montagem das fontes da visão consolidada |
+| Segurança | `RsaAuthHttpTest`, `JwksConfigTest` | Validação do JWT via JWKS |
+| Arquitetura (ArchUnit) | `ArchitectureTest` | Dependências entre camadas e isolamento entre serviços |
+
+```bash
+./mvnw -B -ntp verify
+```
+
+O CI (`.github/workflows/ci.yml`) executa `verify` a cada push e pull request; em tags `v*`, publica `mateusblm/nexfleet-bff:<tag>` e `:latest` no Docker Hub.
 
 ## Equipe
 
