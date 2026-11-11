@@ -31,6 +31,30 @@ public class ManutencoesWebController {
         .cacheControl(CacheControl.noStore()).body(novo);
   }
 
+  @GetMapping("/{id}")
+  public ResponseEntity<ManutencoesRemotas.Dados> consultar(
+      @RequestHeader(value = "Authorization", required = false) String token,
+      @PathVariable UUID id) {
+    return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+        .body(manutencoes.consultar(token, id));
+  }
+
+  @PutMapping("/{id}")
+  public ResponseEntity<ManutencoesRemotas.Dados> atualizar(
+      @RequestHeader(value = "Authorization", required = false) String token,
+      @PathVariable UUID id, @RequestBody ManutencaoPorIdRemota.Atualizacao atualizacao) {
+    return ResponseEntity.ok().cacheControl(CacheControl.noStore())
+        .body(manutencoes.atualizar(token, id, atualizacao));
+  }
+
+  @DeleteMapping("/{id}")
+  public ResponseEntity<Void> excluir(
+      @RequestHeader(value = "Authorization", required = false) String token,
+      @PathVariable UUID id) {
+    manutencoes.excluir(token, id);
+    return ResponseEntity.noContent().cacheControl(CacheControl.noStore()).build();
+  }
+
   @ExceptionHandler(FalhaManutencoes.class)
   public ResponseEntity<Map<String, String>> falha(FalhaManutencoes erro) {
     return ResponseEntity.status(erro.status()).cacheControl(CacheControl.noStore())

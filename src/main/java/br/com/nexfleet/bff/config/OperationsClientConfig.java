@@ -32,6 +32,7 @@ public class OperationsClientConfig {
   @Bean
   GerenciarManutencoesWeb manutencoesWeb(
       @Qualifier("operacoesRestClient") RestClient operacoesRestClient) {
-    return new GerenciarManutencoesWeb(new HttpManutencoes(operacoesRestClient));
+    var http = new HttpManutencoes(operacoesRestClient);
+    return new GerenciarManutencoesWeb(http, http);
   }
 }
