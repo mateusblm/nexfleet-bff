@@ -92,4 +92,31 @@ class HttpEficienciaTest {
     server.expect(anything()).andRespond(withSuccess("{}", MediaType.APPLICATION_JSON));
     assertThrows(RuntimeException.class, () -> client.calcular(entrada));
   }
+
+  @org.junit.jupiter.params.ParameterizedTest
+  @org.junit.jupiter.params.provider.ValueSource(
+      strings = {
+        "https://funcao.azurewebsites.net",
+        "https://funcao.azurewebsites.net/",
+        "https://funcao.azurewebsites.net/api/calcular-eficiencia",
+        "https://funcao.azurewebsites.net/api/calcular-eficiencia/"
+      })
+  void urlConfiguradaComOuSemCaminhoChamaOCaminhoUmaVezSo(String urlConfigurada) {
+    var builderNuvem = RestClient.builder();
+    var servidor = MockRestServiceServer.bindTo(builderNuvem).build();
+    var cliente = HttpEficiencia.comUrl(builderNuvem, urlConfigurada, "chave-da-funcao");
+    servidor
+        .expect(requestTo("https://funcao.azurewebsites.net/api/calcular-eficiencia"))
+        .andRespond(
+            withSuccess(
+                """
+                {"veiculos":[],"frota":{"consumoMedioKmL":null,"custoPorKm":null,
+                  "gastoTotal":0,"distanciaKm":0}}
+                """,
+                MediaType.APPLICATION_JSON));
+
+    cliente.calcular(entrada);
+
+    servidor.verify();
+  }
 }
