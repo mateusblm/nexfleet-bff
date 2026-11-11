@@ -52,4 +52,16 @@ class HttpAbastecimentosTest {
     assertEquals(422, erro.status());
     assertFalse(erro.getMessage().contains("privado"));
   }
+  @Test
+  void tempoEsgotadoOuConexaoRecusadaNoPorIdViraIndisponivel() {
+    var id = UUID.fromString("1d4be0d1-4801-41e1-9c5f-9002b2fc6dcc");
+    server.expect(requestTo("http://operacoes/api/v1/operacoes/abastecimentos/" + id))
+        .andRespond(withException(new java.net.SocketTimeoutException("Read timed out")));
+    server.expect(requestTo("http://operacoes/api/v1/operacoes/abastecimentos/" + id))
+        .andRespond(withException(new java.net.ConnectException("Connection refused")));
+    assertEquals(503, assertThrows(FalhaAbastecimentos.class,
+        () -> client.consultar("Bearer token", id)).status());
+    assertEquals(503, assertThrows(FalhaAbastecimentos.class,
+        () -> client.excluir("Bearer token", id)).status());
+  }
 }
