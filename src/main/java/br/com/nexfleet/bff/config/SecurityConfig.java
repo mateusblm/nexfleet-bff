@@ -87,6 +87,11 @@ public class SecurityConfig {
               var dashboard = auth.requestMatchers(HttpMethod.GET, "/api/v1/dashboard");
               if (rsa) dashboard.authenticated();
               else dashboard.denyAll();
+              var aggregated =
+                  auth.requestMatchers(
+                      HttpMethod.GET, "/api/v1/aggregated-data", "/aggregated-data");
+              if (rsa) aggregated.authenticated();
+              else aggregated.denyAll();
               auth.anyRequest().denyAll();
             })
         .build();
