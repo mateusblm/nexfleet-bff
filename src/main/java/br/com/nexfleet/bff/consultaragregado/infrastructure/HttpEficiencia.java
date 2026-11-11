@@ -15,6 +15,23 @@ public class HttpEficiencia implements EficienciaRemota {
     this.chave = chave;
   }
 
+  /**
+   * Monta o cliente a partir de {@code EFICIENCIA_FUNCTION_URL}. O valor esperado é só a base
+   * ({@code https://<host>}); se já vier com {@code /api/calcular-eficiencia}, o caminho não é
+   * duplicado.
+   */
+  public static HttpEficiencia comUrl(
+      RestClient.Builder builder, String urlConfigurada, String chave) {
+    return new HttpEficiencia(builder.baseUrl(base(urlConfigurada)).build(), chave);
+  }
+
+  static String base(String urlConfigurada) {
+    var url = urlConfigurada.strip();
+    while (url.endsWith("/")) url = url.substring(0, url.length() - 1);
+    if (url.endsWith(PATH)) url = url.substring(0, url.length() - PATH.length());
+    return url;
+  }
+
   @Override
   public Eficiencia calcular(Entrada entrada) {
     Eficiencia resposta;

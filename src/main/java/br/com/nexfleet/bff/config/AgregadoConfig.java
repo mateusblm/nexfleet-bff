@@ -41,9 +41,8 @@ public class AgregadoConfig {
         new JdkClientHttpRequestFactory(
             HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(2)).build());
     factory.setReadTimeout(timeout);
-    return new HttpEficiencia(
-        CorrelationIds.propagate(RestClient.builder()).baseUrl(url).requestFactory(factory).build(),
-        chave);
+    return HttpEficiencia.comUrl(
+        CorrelationIds.propagate(RestClient.builder()).requestFactory(factory), url, chave);
   }
 
   @Bean
