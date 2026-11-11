@@ -43,7 +43,7 @@ flowchart LR
 
 ## Arquitetura
 
-**Clean Architecture + Vertical Slice.** Cada caso de uso é uma fatia em `br.com.nexfleet.bff`, com as camadas `api` (controllers REST), `application` (caso de uso e portas) e `infrastructure` (clientes HTTP dos serviços). O BFF não tem regras de domínio próprias, portanto não há camada `domain`.
+**Clean Architecture + Vertical Slice.** Cada caso de uso é uma fatia em `br.com.nexfleet.bff`, com as camadas `api` (controllers REST), `application` (caso de uso e portas) e `infrastructure` (clientes HTTP dos serviços). Só `consultaragregado` tem regras próprias e, por isso, a camada `domain` (sem Spring nem Jackson): a situação das fontes (`Fontes`, com `502` quando nenhuma responde) e o corte nos registros mais recentes (`UltimosRegistros`). As demais fatias repassam ou compõem dados dos serviços, onde ficam as regras, e não têm `domain`.
 
 | Fatia | Responsabilidade |
 |---|---|
@@ -55,13 +55,14 @@ flowchart LR
 | `gerenciarabastecimentos` | Registro e listagem de abastecimentos |
 | `gerenciarmanutencoes` | Registro e listagem de manutenções |
 | `consultardashboard` | Painel composto por Indicadores e Frota |
-| `consultaragregado` | `GET /aggregated-data` |
+| `consultaragregado` | `GET /aggregated-data` (`api`, `application`, `domain`, `infrastructure`) |
 | `consultarambiente` | Situação do ambiente e dos serviços |
 
 Pacotes técnicos: `config` (composição, clientes HTTP, segurança e JWKS) e `observability` (correlação).
 
 Regras verificadas pelo ArchUnit (`ArchitectureTest`):
 
+- `domain` não depende de `application`, `infrastructure`, `api`, `config`, Spring, Jakarta, JDBC nem Jackson;
 - `application` não depende de Spring, JPA, `infrastructure` nem `api`;
 - `api` não acessa `infrastructure` nem persistência diretamente;
 - nenhuma classe importa código interno de outros serviços.
