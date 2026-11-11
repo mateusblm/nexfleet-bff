@@ -34,7 +34,8 @@ flowchart LR
 
 - Login e consulta do usuário atual, delegados à Identidade.
 - Validação do JWT pela JWKS da Identidade (`/.well-known/jwks.json`, perfil `jwt-rsa`).
-- Cadastros de usuários, veículos, motoristas e vínculos; registros de abastecimentos e manutenções, encaminhados ao serviço dono de cada dado.
+- Cadastros de usuários, veículos, motoristas e vínculos; registro, consulta, edição e exclusão de abastecimentos e manutenções, encaminhados ao serviço dono de cada dado.
+- Erros de abastecimentos e manutenções: `403`, `404` e `422` do Operações são repassados com a mensagem original (campo `message`); falha de comunicação ou resposta inválida vira `503`.
 - Exclusão definitiva de veículo bloqueada quando há manutenções registradas em Operações (Frota aplica as demais regras: registro inativo e sem histórico).
 - Painel composto por Indicadores (gastos e próximas manutenções) e Frota (situação dos veículos).
 - **Visão consolidada** (`GET /aggregated-data`): Frota, Operações e eficiência em um único JSON, com retorno parcial quando uma fonte falha.
@@ -52,8 +53,8 @@ flowchart LR
 | `gerenciarveiculos` | Cadastro de veículos; checagem de manutenções antes da exclusão definitiva |
 | `gerenciarmotoristas` | Cadastro de motoristas |
 | `gerenciarvinculos` | Vínculos motorista ↔ veículo |
-| `gerenciarabastecimentos` | Registro e listagem de abastecimentos |
-| `gerenciarmanutencoes` | Registro e listagem de manutenções |
+| `gerenciarabastecimentos` | Registro, listagem, consulta, edição e exclusão de abastecimentos |
+| `gerenciarmanutencoes` | Registro, listagem, consulta, edição e exclusão de manutenções |
 | `consultardashboard` | Painel composto por Indicadores e Frota |
 | `consultaragregado` | `GET /aggregated-data` (`api`, `application`, `domain`, `infrastructure`) |
 | `consultarambiente` | Situação do ambiente e dos serviços |
@@ -86,7 +87,9 @@ Regras verificadas pelo ArchUnit (`ArchitectureTest`):
 | `GET`, `POST` | `/api/v1/vinculos` | Listar e criar vínculos |
 | `PUT` | `/api/v1/vinculos/{id}/encerramento` | Encerrar vínculo |
 | `GET`, `POST` | `/api/v1/abastecimentos` | Listar e registrar abastecimentos |
+| `GET`, `PUT`, `DELETE` | `/api/v1/abastecimentos/{id}` | Consultar, editar e excluir abastecimento |
 | `GET`, `POST` | `/api/v1/manutencoes` | Listar e registrar manutenções |
+| `GET`, `PUT`, `DELETE` | `/api/v1/manutencoes/{id}` | Consultar, editar e excluir manutenção |
 | `GET` | `/api/v1/dashboard` | Painel de custos e situação da frota |
 | `GET` | `/aggregated-data`, `/api/v1/aggregated-data` | Visão consolidada |
 
@@ -185,7 +188,7 @@ docker run --rm -p 8090:8080 \
   -e INDICADORES_URL=http://<host-de-indicadores>:8080 \
   -e EFICIENCIA_FUNCTION_URL=http://<host-da-function> \
   -e EFICIENCIA_FUNCTION_KEY=<chave-da-função> \
-  mateusblm/nexfleet-bff:v1.0.0
+  mateusblm/nexfleet-bff:v1.1.0
 ```
 
 Para gerar a imagem a partir do código: `docker build -t mateusblm/nexfleet-bff:local .`
