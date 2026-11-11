@@ -73,6 +73,11 @@ public class ConsultarAgregado {
             : aguardar("funcao", eficienciaFutura);
     if (dadosOperacoes.isEmpty())
       LOG.warn("agregacao_fonte_falhou fonte=funcao motivo=operacoes_indisponivel");
+    if (dadosOperacoes.filter(OperacoesAgregadasRemotas.Historico::truncado).isPresent())
+      LOG.warn(
+          "agregacao_operacoes_truncadas abastecimentos={} manutencoes={}",
+          dadosOperacoes.get().abastecimentos().size(),
+          dadosOperacoes.get().manutencoes().size());
 
     if (dadosFrota.isEmpty() && dadosOperacoes.isEmpty() && dadosEficiencia.isEmpty())
       throw new FalhaAgregado(502);
@@ -152,7 +157,8 @@ public class ConsultarAgregado {
                 Comparator.comparing(OperacoesAgregadasRemotas.Manutencao::realizadaEm)
                     .reversed())
             .limit(ULTIMOS_REGISTROS)
-            .toList());
+            .toList(),
+        historico.truncado());
   }
 
   private static String bearer(String token) {
@@ -161,11 +167,13 @@ public class ConsultarAgregado {
     return token;
   }
 
+  /** {@code truncado}: o histórico usado no cálculo foi cortado no teto do BFF. */
   public record Operacoes(
       List<OperacoesAgregadasRemotas.Abastecimento> abastecimentos,
-      List<OperacoesAgregadasRemotas.Manutencao> manutencoes) {
+      List<OperacoesAgregadasRemotas.Manutencao> manutencoes,
+      boolean truncado) {
     static Operacoes vazia() {
-      return new Operacoes(List.of(), List.of());
+      return new Operacoes(List.of(), List.of(), false);
     }
   }
 

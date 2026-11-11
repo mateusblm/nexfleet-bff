@@ -26,7 +26,13 @@ public interface OperacoesAgregadasRemotas {
       BigDecimal valor,
       LocalDate proximaManutencao) {}
 
-  record Historico(List<Abastecimento> abastecimentos, List<Manutencao> manutencoes) {}
+  /** {@code truncado}: Operações tinha mais registros do que o teto lido pelo BFF. */
+  record Historico(
+      List<Abastecimento> abastecimentos, List<Manutencao> manutencoes, boolean truncado) {
+    public Historico(List<Abastecimento> abastecimentos, List<Manutencao> manutencoes) {
+      this(abastecimentos, manutencoes, false);
+    }
+  }
 
   Historico consultar(String token);
 }
