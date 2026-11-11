@@ -1,6 +1,7 @@
 package br.com.nexfleet.bff.observability;
 
 import java.util.UUID;
+import java.util.concurrent.Executor;
 import org.slf4j.MDC;
 import org.springframework.web.client.RestClient;
 
@@ -30,5 +31,23 @@ public final class CorrelationIds {
       request.getHeaders().set(HEADER, currentOrNew());
       return execution.execute(request, body);
     });
+  }
+
+  /** Repassa o MDC (correlationId) às tarefas, para que logs e chamadas paralelas o conservem. */
+  public static Executor contextual(Executor delegate) {
+    return task -> {
+      var contexto = MDC.getCopyOfContextMap();
+      delegate.execute(() -> {
+        var anterior = MDC.getCopyOfContextMap();
+        if (contexto == null) MDC.clear();
+        else MDC.setContextMap(contexto);
+        try {
+          task.run();
+        } finally {
+          if (anterior == null) MDC.clear();
+          else MDC.setContextMap(anterior);
+        }
+      });
+    };
   }
 }
