@@ -249,4 +249,39 @@ class ConsultarAgregadoHttpTest {
 
     verifyNoInteractions(frota, operacoes, eficiencia);
   }
+
+  @Test
+  void historicoTruncadoMarcaOperacoesOkComTruncadoEAvisaNoLog(CapturedOutput saida)
+      throws Exception {
+    var completo = dadosOperacoes();
+    when(frota.consultar(TOKEN)).thenReturn(dadosFrota());
+    when(operacoes.consultar(TOKEN))
+        .thenReturn(
+            new OperacoesAgregadasRemotas.Historico(
+                completo.abastecimentos(), completo.manutencoes(), true));
+    when(eficiencia.calcular(any())).thenReturn(dadosEficiencia());
+
+    mvc.perform(
+            get("/api/v1/aggregated-data")
+                .header("Authorization", TOKEN)
+                .header("X-Correlation-ID", CORRELATION))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.fontes.operacoes").value("ok"))
+        .andExpect(jsonPath("$.operacoes.truncado").value(true))
+        .andExpect(jsonPath("$.operacoes.abastecimentos.length()").value(2));
+
+    assertThat(saida.getAll())
+        .containsPattern("WARN .*correlationId=" + CORRELATION + ".*agregacao_operacoes_truncadas");
+  }
+
+  @Test
+  void historicoCompletoInformaTruncadoFalso() throws Exception {
+    when(frota.consultar(TOKEN)).thenReturn(dadosFrota());
+    when(operacoes.consultar(TOKEN)).thenReturn(dadosOperacoes());
+    when(eficiencia.calcular(any())).thenReturn(dadosEficiencia());
+
+    mvc.perform(get("/api/v1/aggregated-data").header("Authorization", TOKEN))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.operacoes.truncado").value(false));
+  }
 }
