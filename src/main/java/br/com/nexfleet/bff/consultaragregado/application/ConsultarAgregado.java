@@ -1,5 +1,7 @@
 package br.com.nexfleet.bff.consultaragregado.application;
 
+import br.com.nexfleet.bff.consultaragregado.domain.Fontes;
+import br.com.nexfleet.bff.consultaragregado.domain.UltimosRegistros;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -18,10 +20,8 @@ import org.slf4j.LoggerFactory;
  * fontes.funcao} vem "falhou". A placa enviada à Function vem de Frota quando disponível.
  */
 public class ConsultarAgregado {
-  public static final int ULTIMOS_REGISTROS = 10;
+  public static final int ULTIMOS_REGISTROS = UltimosRegistros.QUANTIDADE;
   private static final Logger LOG = LoggerFactory.getLogger(ConsultarAgregado.class);
-  private static final String OK = "ok";
-  private static final String FALHOU = "falhou";
 
   private final FrotaAgregadaRemota frota;
   private final OperacoesAgregadasRemotas operacoes;
@@ -79,15 +79,15 @@ public class ConsultarAgregado {
           dadosOperacoes.get().abastecimentos().size(),
           dadosOperacoes.get().manutencoes().size());
 
-    if (dadosFrota.isEmpty() && dadosOperacoes.isEmpty() && dadosEficiencia.isEmpty())
-      throw new FalhaAgregado(502);
+    var fontes =
+        Fontes.de(dadosFrota.isPresent(), dadosOperacoes.isPresent(), dadosEficiencia.isPresent());
+    if (fontes.nenhumaRespondeu()) throw new FalhaAgregado(502);
 
     return new Resultado(
         dadosFrota.orElse(FrotaAgregadaRemota.Frota.vazia()),
         dadosOperacoes.map(ConsultarAgregado::ultimos).orElse(Operacoes.vazia()),
         dadosEficiencia.orElse(EficienciaRemota.Eficiencia.vazia()),
-        new Fontes(
-            situacao(dadosFrota), situacao(dadosOperacoes), situacao(dadosEficiencia)),
+        fontes,
         Instant.now(clock));
   }
 
@@ -107,10 +107,6 @@ public class ConsultarAgregado {
       LOG.warn("agregacao_fonte_falhou fonte={} motivo={}", fonte, motivo);
       return Optional.empty();
     }
-  }
-
-  private static String situacao(Optional<?> dados) {
-    return dados.isPresent() ? OK : FALHOU;
   }
 
   static EficienciaRemota.Entrada entrada(
@@ -146,18 +142,10 @@ public class ConsultarAgregado {
 
   private static Operacoes ultimos(OperacoesAgregadasRemotas.Historico historico) {
     return new Operacoes(
-        historico.abastecimentos().stream()
-            .sorted(
-                Comparator.comparing(OperacoesAgregadasRemotas.Abastecimento::realizadoEm)
-                    .reversed())
-            .limit(ULTIMOS_REGISTROS)
-            .toList(),
-        historico.manutencoes().stream()
-            .sorted(
-                Comparator.comparing(OperacoesAgregadasRemotas.Manutencao::realizadaEm)
-                    .reversed())
-            .limit(ULTIMOS_REGISTROS)
-            .toList(),
+        UltimosRegistros.maisRecentes(
+            historico.abastecimentos(), OperacoesAgregadasRemotas.Abastecimento::realizadoEm),
+        UltimosRegistros.maisRecentes(
+            historico.manutencoes(), OperacoesAgregadasRemotas.Manutencao::realizadaEm),
         historico.truncado());
   }
 
@@ -176,8 +164,6 @@ public class ConsultarAgregado {
       return new Operacoes(List.of(), List.of(), false);
     }
   }
-
-  public record Fontes(String frota, String operacoes, String funcao) {}
 
   public record Resultado(
       FrotaAgregadaRemota.Frota frota,
