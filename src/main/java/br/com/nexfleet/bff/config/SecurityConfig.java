@@ -50,6 +50,8 @@ public class SecurityConfig {
                       "/actuator/health",
                       "/actuator/health/**",
                       "/actuator/prometheus",
+                      "/v3/api-docs",
+                      "/v3/api-docs/**",
                       "/api/v1/ambiente")
                   .permitAll()
                   .requestMatchers(HttpMethod.POST, "/api/v1/auth/login")
