@@ -38,7 +38,9 @@ public class SecurityConfig {
                     "/api/v1/vinculos",
                     "/api/v1/vinculos/*/encerramento",
                     "/api/v1/abastecimentos",
-                    "/api/v1/manutencoes"))
+                    "/api/v1/abastecimentos/*",
+                    "/api/v1/manutencoes",
+                    "/api/v1/manutencoes/*"))
         .sessionManagement(
             session ->
                 session.sessionCreationPolicy(
@@ -80,10 +82,10 @@ public class SecurityConfig {
                   auth.requestMatchers("/api/v1/vinculos", "/api/v1/vinculos/*/encerramento");
               if (rsa) links.authenticated();
               else links.denyAll();
-              var operations = auth.requestMatchers("/api/v1/abastecimentos");
+              var operations = auth.requestMatchers("/api/v1/abastecimentos", "/api/v1/abastecimentos/*");
               if (rsa) operations.authenticated();
               else operations.denyAll();
-              var maintenance = auth.requestMatchers("/api/v1/manutencoes");
+              var maintenance = auth.requestMatchers("/api/v1/manutencoes", "/api/v1/manutencoes/*");
               if (rsa) maintenance.authenticated();
               else maintenance.denyAll();
               var dashboard = auth.requestMatchers(HttpMethod.GET, "/api/v1/dashboard");

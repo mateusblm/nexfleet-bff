@@ -6,7 +6,7 @@ import java.util.function.Supplier;
 import org.springframework.core.ParameterizedTypeReference;
 import org.springframework.web.client.*;
 
-public class HttpAbastecimentos implements AbastecimentosRemotos {
+public class HttpAbastecimentos implements AbastecimentosRemotos, AbastecimentoPorIdRemoto {
   private static final String PATH = "/api/v1/operacoes/abastecimentos";
   private final RestClient client;
   public HttpAbastecimentos(RestClient client) { this.client = client; }
@@ -32,6 +32,24 @@ public class HttpAbastecimentos implements AbastecimentosRemotos {
         .body(entrada).retrieve().body(Dados.class)));
   }
 
+  @Override
+  public Dados consultar(String token, UUID id) {
+    return chamada(() -> validar(client.get().uri(PATH + "/{id}", id)
+        .header("Authorization", token).retrieve().body(Dados.class)));
+  }
+
+  @Override
+  public Dados atualizar(String token, UUID id, Atualizacao atualizacao) {
+    return chamada(() -> validar(client.put().uri(PATH + "/{id}", id)
+        .header("Authorization", token).body(atualizacao).retrieve().body(Dados.class)));
+  }
+
+  @Override
+  public void excluir(String token, UUID id) {
+    chamada(() -> client.delete().uri(PATH + "/{id}", id)
+        .header("Authorization", token).retrieve().toBodilessEntity());
+  }
+
   private Dados validar(Dados dados) {
     if (dados == null || dados.id() == null || dados.veiculoId() == null
         || dados.motoristaId() == null || dados.realizadoEm() == null
@@ -45,7 +63,22 @@ public class HttpAbastecimentos implements AbastecimentosRemotos {
     try { return request.get(); }
     catch (RestClientResponseException error) {
       int status = error.getStatusCode().value();
-      throw new FalhaAbastecimentos(Set.of(400,401,403,404,409,422).contains(status) ? status : 503);
+      if (Set.of(403,404,422).contains(status))
+        throw new FalhaAbastecimentos(status, mensagemDoOperacoes(error));
+      throw new FalhaAbastecimentos(Set.of(400,401,409).contains(status) ? status : 503);
     } catch (RestClientException error) { throw new FalhaAbastecimentos(503); }
+  }
+
+  private record Mensagem(String message) {}
+
+  /** Repassa só o campo público {@code message} do Operações; corpo fora desse formato é ignorado. */
+  private static String mensagemDoOperacoes(RestClientResponseException error) {
+    try {
+      var corpo = error.getResponseBodyAs(Mensagem.class);
+      var texto = corpo == null ? null : corpo.message();
+      return texto == null || texto.length() > 500 ? null : texto;
+    } catch (RuntimeException ignorada) {
+      return null;
+    }
   }
 }

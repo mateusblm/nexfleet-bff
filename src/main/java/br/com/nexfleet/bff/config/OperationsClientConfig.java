@@ -26,7 +26,8 @@ public class OperationsClientConfig {
   @Bean
   GerenciarAbastecimentosWeb abastecimentosWeb(
       @Qualifier("operacoesRestClient") RestClient operacoesRestClient) {
-    return new GerenciarAbastecimentosWeb(new HttpAbastecimentos(operacoesRestClient));
+    var http = new HttpAbastecimentos(operacoesRestClient);
+    return new GerenciarAbastecimentosWeb(http, http);
   }
   @Bean
   GerenciarManutencoesWeb manutencoesWeb(
