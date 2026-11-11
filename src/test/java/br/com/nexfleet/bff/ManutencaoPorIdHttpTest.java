@@ -1,0 +1,138 @@
+package br.com.nexfleet.bff;
+
+import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.*;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.*;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.*;
+
+import java.time.Instant;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.boot.test.context.SpringBootTest;
+import org.springframework.boot.webmvc.test.autoconfigure.AutoConfigureMockMvc;
+import org.springframework.http.MediaType;
+import org.springframework.security.oauth2.jwt.*;
+import org.springframework.test.context.*;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
+import org.springframework.test.web.servlet.MockMvc;
+
+@SpringBootTest
+@AutoConfigureMockMvc
+@ActiveProfiles("jwt-rsa")
+class ManutencaoPorIdHttpTest {
+  static final OperacoesFalso operacoes = new OperacoesFalso();
+  static final String TOKEN = "Bearer token-valido";
+  static final String CORRELATION = "7d1f0a52-4c1e-4a43-9a51-2f5a3a3e9b10";
+  static final String ID = "5a0e7c2b-91d4-4b3e-8f6a-2c7d9e1b3a40";
+  static final String DADOS = "{\"id\":\"" + ID + "\","
+      + "\"veiculoId\":\"b176f1b1-bc54-4f22-9b2e-fb69469ab033\",\"tipo\":\"CORRETIVA\","
+      + "\"realizadaEm\":\"2026-11-06\",\"quilometragem\":15200,"
+      + "\"descricao\":\"Troca de pastilhas\",\"oficina\":\"Central\",\"valor\":620.00,"
+      + "\"proximaManutencao\":null,\"criadoEm\":\"2026-11-06T12:00:00Z\",\"versao\":2}";
+  static final String EDICAO = "{\"tipo\":\"CORRETIVA\",\"realizadaEm\":\"2026-11-06\","
+      + "\"quilometragem\":15200,\"descricao\":\"Troca de pastilhas\","
+      + "\"oficina\":\"Central\",\"valor\":620.00,\"proximaManutencao\":null}";
+
+  @Autowired MockMvc mvc;
+  @MockitoBean JwtDecoder jwtDecoder;
+
+  @DynamicPropertySource
+  static void propriedades(DynamicPropertyRegistry registry) {
+    registry.add("services.operacoes.url", operacoes::url);
+  }
+
+  @BeforeEach
+  void autenticacao() {
+    when(jwtDecoder.decode(anyString())).thenThrow(new BadJwtException("invalido"));
+    doReturn(Jwt.withTokenValue("token-valido").header("alg", "RS256")
+            .subject("e2f6b588-00cf-45bc-927e-c4a08647dfde")
+            .issuedAt(Instant.now()).expiresAt(Instant.now().plusSeconds(600)).build())
+        .when(jwtDecoder).decode("token-valido");
+  }
+
+  @Test
+  void consultaPorIdRepassandoBearerECorrelationId() throws Exception {
+    operacoes.responde(200, DADOS);
+    mvc.perform(get("/api/v1/manutencoes/" + ID)
+            .header("Authorization", TOKEN).header("X-Correlation-ID", CORRELATION))
+        .andExpect(status().isOk())
+        .andExpect(header().string("Cache-Control", "no-store"))
+        .andExpect(jsonPath("$.id").value(ID))
+        .andExpect(jsonPath("$.tipo").value("CORRETIVA"))
+        .andExpect(jsonPath("$.quilometragem").value(15200))
+        .andExpect(jsonPath("$.versao").value(2));
+    var chamada = operacoes.ultima();
+    assertEquals("GET", chamada.metodo());
+    assertEquals("/api/v1/operacoes/manutencoes/" + ID, chamada.caminho());
+    assertEquals(TOKEN, chamada.authorization());
+    assertEquals(CORRELATION, chamada.correlationId());
+  }
+
+  @Test
+  void editaRepassandoSomenteOsCamposEditaveis() throws Exception {
+    operacoes.responde(200, DADOS);
+    mvc.perform(put("/api/v1/manutencoes/" + ID)
+            .header("Authorization", TOKEN).header("X-Correlation-ID", CORRELATION)
+            .contentType(MediaType.APPLICATION_JSON)
+            .content(EDICAO.replace("{", "{\"veiculoId\":\"00000000-0000-0000-0000-000000000099\",")))
+        .andExpect(status().isOk())
+        .andExpect(jsonPath("$.versao").value(2))
+        .andExpect(jsonPath("$.tipo").value("CORRETIVA"));
+    var chamada = operacoes.ultima();
+    assertEquals("PUT", chamada.metodo());
+    assertEquals("/api/v1/operacoes/manutencoes/" + ID, chamada.caminho());
+    assertEquals(TOKEN, chamada.authorization());
+    assertEquals(CORRELATION, chamada.correlationId());
+    assertEquals(EDICAO, chamada.corpo());
+  }
+
+  @Test
+  void excluiERespondeSemCorpo() throws Exception {
+    operacoes.responde(204, "");
+    mvc.perform(delete("/api/v1/manutencoes/" + ID)
+            .header("Authorization", TOKEN).header("X-Correlation-ID", CORRELATION))
+        .andExpect(status().isNoContent())
+        .andExpect(content().string(""));
+    var chamada = operacoes.ultima();
+    assertEquals("DELETE", chamada.metodo());
+    assertEquals("/api/v1/operacoes/manutencoes/" + ID, chamada.caminho());
+    assertEquals(TOKEN, chamada.authorization());
+    assertEquals(CORRELATION, chamada.correlationId());
+  }
+
+  @Test
+  void repassaStatusEMensagemDoOperacoes() throws Exception {
+    for (int codigo : new int[] {403, 404, 422}) {
+      operacoes.responde(codigo, "{\"message\":\"Mensagem do Operações " + codigo + ".\"}");
+      mvc.perform(put("/api/v1/manutencoes/" + ID).header("Authorization", TOKEN)
+              .contentType(MediaType.APPLICATION_JSON)
+              .content(EDICAO))
+          .andExpect(status().is(codigo))
+          .andExpect(jsonPath("$.message").value("Mensagem do Operações " + codigo + "."));
+      mvc.perform(get("/api/v1/manutencoes/" + ID).header("Authorization", TOKEN))
+          .andExpect(status().is(codigo))
+          .andExpect(jsonPath("$.message").value("Mensagem do Operações " + codigo + "."));
+      mvc.perform(delete("/api/v1/manutencoes/" + ID).header("Authorization", TOKEN))
+          .andExpect(status().is(codigo))
+          .andExpect(jsonPath("$.message").value("Mensagem do Operações " + codigo + "."));
+    }
+  }
+
+  @Test
+  void falhaDoOperacoesViraServicoIndisponivel() throws Exception {
+    operacoes.responde(500, "{\"message\":\"detalhe interno\"}");
+    mvc.perform(get("/api/v1/manutencoes/" + ID).header("Authorization", TOKEN))
+        .andExpect(status().isServiceUnavailable())
+        .andExpect(jsonPath("$.message").value("Serviço de operações indisponível."));
+  }
+
+  @Test
+  void semTokenRespondeNaoAutorizadoSemChamarOOperacoes() throws Exception {
+    operacoes.responde(200, DADOS);
+    mvc.perform(get("/api/v1/manutencoes/" + ID)).andExpect(status().isUnauthorized());
+    mvc.perform(delete("/api/v1/manutencoes/" + ID)).andExpect(status().isUnauthorized());
+    assertNull(operacoes.ultima());
+  }
+}

@@ -50,4 +50,17 @@ class HttpManutencoesTest {
     assertEquals(422, erro.status());
     assertFalse(erro.getMessage().contains("privado"));
   }
+
+  @Test
+  void tempoEsgotadoOuConexaoRecusadaNoPorIdViraIndisponivel() {
+    var id = UUID.fromString("5a0e7c2b-91d4-4b3e-8f6a-2c7d9e1b3a40");
+    server.expect(requestTo("http://operacoes/api/v1/operacoes/manutencoes/" + id))
+        .andRespond(withException(new java.net.SocketTimeoutException("Read timed out")));
+    server.expect(requestTo("http://operacoes/api/v1/operacoes/manutencoes/" + id))
+        .andRespond(withException(new java.net.ConnectException("Connection refused")));
+    assertEquals(503, assertThrows(FalhaManutencoes.class,
+        () -> client.consultar("Bearer token", id)).status());
+    assertEquals(503, assertThrows(FalhaManutencoes.class,
+        () -> client.excluir("Bearer token", id)).status());
+  }
 }
